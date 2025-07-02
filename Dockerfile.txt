@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia el resto del código de la aplicación
 COPY . .
 
-# Comando para ejecutar la aplicación usando Gunicorn (un servidor de producción)
-# Cloud Run inyectará la variable de entorno PORT
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
+# Comando para ejecutar la aplicación usando Gunicorn.
+# Cloud Run inyectará la variable de entorno PORT, y Gunicorn la usará.
+# Usamos la forma "shell" para que $PORT sea sustituido.
+CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 0 main:app
