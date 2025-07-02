@@ -1,6 +1,5 @@
 import os
 from flask import Flask, request, jsonify
-from google.cloud import storage
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
@@ -8,62 +7,79 @@ from sendgrid.helpers.mail import Mail
 app = Flask(__name__)
 
 # --- Configuración ---
-# Estas variables se configurarán en Cloud Run como variables de entorno
+# Estas variables se configurarán en Cloud Run como "variables de entorno"
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL') # El email verificado en SendGrid desde el que enviarás
-BUCKET_NAME = os.environ.get('BUCKET_NAME')
-TEMPLATE_FILE_NAME = os.environ.get('TEMPLATE_FILE_NAME')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL') # Tu email verificado en SendGrid
 
-# Inicializa el cliente de Google Cloud Storage
-storage_client = storage.Client()
+@app.route('/send_email', methods=['POST'])
+def send_email():
+    """
+    Endpoint para recibir una solicitud y enviar un correo.
+    Espera un JSON con: {"recipient_email": "...", "subject": "...", "body": "..."}
+    """
+    # 1. Validar que la configuración básica exista
+    if not SENDGRID_API_KEY or not SENDER_EMAIL:
+        return jsonify({"error": "Configuración del servidor incompleta."}), 500
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """
-    Endpoint que recibe la llamada de Dialogflow.
-    """
     try:
-        # 1. Obtener el JSON de la solicitud
-        req_data = request.get_json(force=True)
+        # 2. Obtener los datos del cuerpo de la solicitud (JSON)
+        data = request.get_json()
+        recipient = data.get('recipient_email')
+        subject = data.get('subject')
+        body = data.get('body')
 
-        # 2. Extraer el email del destinatario de los parámetros de Dialogflow
-        recipient_email = req_data['queryResult']['parameters']['email']
-        if not recipient_email:
-            raise ValueError("El parámetro 'email' no se encontró en la solicitud.")
+        # Validar que los datos necesarios fueron enviados
+        if not all([recipient, subject, body]):
+            return jsonify({"error": "Faltan datos en la solicitud. Se requiere 'recipient_email', 'subject' y 'body'."}), 400
 
-        # 3. Descargar la plantilla desde GCS
-        bucket = storage_client.bucket(BUCKET_NAME)
-        blob = bucket.blob(TEMPLATE_FILE_NAME)
-        html_content = blob.download_as_text()
-
-        # 4. Crear el objeto del correo
+        # 3. Crear el objeto del correo
         message = Mail(
             from_email=SENDER_EMAIL,
-            to_emails=recipient_email,
-            subject='Correo enviado desde el Agente Conversacional',
-            html_content=html_content
+            to_emails=recipient,
+            subject=subject,
+            html_content=f"<p>
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; line-height: 1.6; }
+                        .container { padding: 20px; border: 1px solid #ddd; border-radius: 8px; max-width: 600px; margin: 20px auto; }
+                        .header { background-color: #f4f4f4; padding: 10px; text-align: center; }
+                        .footer { font-size: 0.8em; text-align: center; color: #777; margin-top: 20px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>Notificación Automática</h2>
+                        </div>
+                        <p>Hola,</p>
+                        <p>Este es un mensaje generado automáticamente a través de una solicitud en nuestro agente conversacional.</p>
+                        <p>Este sistema automatizado facilita la comunicación y el envío de información estándar de manera eficiente.</p>
+                        <p>¡Gracias por utilizar nuestros servicios!</p>
+                        <div class="footer">
+                            <p>Este correo fue enviado desde un sistema automatizado. Por favor, no respondas a este mensaje.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            </p>" # Puedes usar HTML directamente aquí
         )
 
-        # 5. Enviar el correo usando SendGrid
+        # 4. Enviar el correo a través de SendGrid
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
-        
-        # Si llegamos aquí, el correo se envió con éxito (código 2xx)
-        print(f"Correo enviado a {recipient_email}, status code: {response.status_code}")
 
-        # 6. Preparar la respuesta para Dialogflow
-        fulfillment_text = f"¡Listo! He enviado el correo a {recipient_email}."
-        
-        return jsonify({'fulfillmentText': fulfillment_text})
+        # 5. Devolver una respuesta de éxito
+        print(f"Correo enviado a {recipient}. Status: {response.status_code}")
+        return jsonify({"message": f"Correo enviado exitosamente a {recipient}"}), 200
 
     except Exception as e:
-        print(f"Error: {e}")
-        # En caso de error, enviar una respuesta clara a Dialogflow
-        error_text = "Lo siento, ha ocurrido un problema técnico y no he podido enviar el correo."
-        return jsonify({'fulfillmentText': error_text})
+        # Manejo de errores
+        print(f"Error al enviar correo: {e}")
+        return jsonify({"error": "Ocurrió un error interno al procesar la solicitud."}), 500
 
 if __name__ == "__main__":
-    # Este bloque es para desarrollo local (ej: ejecutar 'python main.py').
-    # Gunicorn, usado en Cloud Run, no ejecuta este bloque.
-    # En su lugar, llama directamente al objeto 'app' de Flask.
+    # Este bloque permite ejecutar el servidor en modo de desarrollo local.
+    # Cloud Run usará Gunicorn para iniciar la aplicación.
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
