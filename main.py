@@ -63,5 +63,7 @@ def webhook():
         return jsonify({'fulfillmentText': error_text})
 
 if __name__ == "__main__":
-    # Gunicorn usará esto para ejecutar la app. El puerto se define por Cloud Run.
+    # Este bloque es para desarrollo local (ej: ejecutar 'python main.py').
+    # Gunicorn, usado en Cloud Run, no ejecuta este bloque.
+    # En su lugar, llama directamente al objeto 'app' de Flask.
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
